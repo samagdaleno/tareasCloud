@@ -6,17 +6,22 @@ var http = require("https");
 var lambda = new AWS.Lambda({"region": "us-east-1"});
 var crypto = require('crypto-js');
 var format = require("string_format");
+//var dateFormat = require('dateformat');
 
-var privateKey = 'd27fff4908f7fff63f4183945600243887833968';
-var publicKey = 'ec161d47f040502ca5b5eeedf637617f';
+var privateKey = '6c454472cc985829b464b06c7dc908fc9f5ed8ec';
+var publicKey = '22f8edbc735e0e4d217bd6ad0d808bc7';
 var ts = new Date().getTime();
 var hash = crypto.MD5(ts + privateKey + publicKey).toString();
 var seriesUrl = "https://gateway.marvel.com:443/v1/public/characters/{0}/series?limit=1&ts={1}&apikey={2}&hash={3}"; 
 var s3 = new AWS.S3();
 var bucket = "sam-practica";
-var params, json, id1, id2, key;
+var table = "SamMarvelTable";
+var params, json, id1, id2, key, dynamoParams, lambdaCount = 0, startTime;
 
 module.exports.get = (event, context, callback) => {
+
+    startTime = new Date() + '';
+    //startTime = dateFormat(startTime, "dddd, mmmm dS, yyyy, h:MM:ss TT");
 
     if (event.id1 < event.id2) {
         id1 = event.id1;
@@ -62,6 +67,7 @@ module.exports.get = (event, context, callback) => {
                         if (err) console.log(err, err.stack); 
                         else     console.log("Successfully put object in " + params.Bucket);           
                     });
+                    logResults(context.memoryLimitInMB, context.memoryLimitInMB);
                 }
             );
         }
@@ -69,7 +75,32 @@ module.exports.get = (event, context, callback) => {
             //console.log("Object already exists. Retrieving...");
             json = JSON.parse(data.Body.toString());
             callback(null, json);
+            logResults(context.memoryLimitInMB, context.memoryLimitInMB);
         }
+    });
+
+}
+
+var logResults = function(memoryReservedMB, memoryUsedMB) {
+    var endTime = new Date() + '';
+    //endTime = dateFormat(endTime, "dddd, mmmm dS, yyyy, h:MM:ss TT");
+    dynamoParams = {
+        TableName : table,
+        Item: {
+            Id: hash,
+            StartTime: startTime,
+            EndTime: endTime,
+            SingleQuantity: lambdaCount,
+            Character1: id1,
+            Character2: id2,
+            MemoryReservedMB: memoryReservedMB,
+            MemoryUsedMB: memoryUsedMB
+      }
+    };
+    var documentClient = new AWS.DynamoDB.DocumentClient();
+    documentClient.put(dynamoParams, function(err, data) {
+      if (err) console.log(err);
+      else console.log('Successfully added ' + data + ' to ' + table);
     });
 }
 
@@ -97,7 +128,7 @@ var getSeries = function(url, callback) {
 }
 
 var invokeLambdas = function(charId, seriesCount, callback) {
-    var lambdaCount = Math.ceil(seriesCount / 100);
+    lambdaCount = Math.ceil(seriesCount / 100);
     var tasks = [];
 
     for (let i = 0; i < lambdaCount; i++) {
